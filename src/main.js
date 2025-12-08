@@ -1,12 +1,14 @@
 import { TabManager } from './lib/TabManager.js';
 import { BookmarkManager } from './lib/BookmarkManager.js';
 import { HistoryManager } from './lib/HistoryManager.js';
+import { supabase } from './lib/supabase.js';
 
 class Browser {
   constructor() {
     this.tabManager = new TabManager();
     this.bookmarkManager = new BookmarkManager();
     this.historyManager = new HistoryManager();
+    this.proxyUrl = null;
 
     this.elements = {
       tabs: document.getElementById('tabs'),
@@ -29,11 +31,17 @@ class Browser {
 
     this.defaultSearchEngine = 'https://duckduckgo.com/?q=';
     this.homeUrl = 'about:newtab';
+    this.loadingId = null;
   }
 
   async init() {
     await this.bookmarkManager.initialize();
     await this.historyManager.initialize();
+
+    // Get proxy URL from Supabase
+    if (supabase) {
+      this.proxyUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/web-proxy`;
+    }
 
     this.setupEventListeners();
     this.tabManager.createTab();
@@ -118,7 +126,7 @@ class Browser {
     this.loadUrl(url);
   }
 
-  loadUrl(url) {
+  async loadUrl(url) {
     const tab = this.tabManager.getActiveTab();
     if (!tab) return;
 
@@ -127,37 +135,98 @@ class Browser {
       return;
     }
 
-    const iframe = this.getTabFrame(tab.id);
-    if (iframe) {
-      iframe.src = url;
+    this.showLoading(tab.id);
 
-      iframe.onload = () => {
-        try {
-          const title = iframe.contentDocument?.title || url;
-          this.tabManager.updateTab(tab.id, { title });
-          this.historyManager.addToHistory(title, url);
-        } catch (e) {
-          this.tabManager.updateTab(tab.id, { title: url });
-          this.historyManager.addToHistory(url, url);
-        }
-      };
+    try {
+      const response = await fetch(`${this.proxyUrl}?url=${encodeURIComponent(url)}`);
+      const data = await response.json();
 
-      iframe.onerror = () => {
-        this.tabManager.updateTab(tab.id, { title: 'Failed to load' });
-      };
+      if (data.error) {
+        this.showError(tab.id, data.error);
+        return;
+      }
+
+      this.displayContent(tab.id, data);
+      this.tabManager.updateTab(tab.id, { title: data.title });
+      this.historyManager.addToHistory(data.title, url);
+    } catch (error) {
+      this.showError(tab.id, error.message);
     }
   }
 
-  getTabFrame(tabId) {
-    let iframe = document.getElementById(`frame-${tabId}`);
-    if (!iframe) {
-      iframe = document.createElement('iframe');
-      iframe.id = `frame-${tabId}`;
-      iframe.className = 'browser-frame';
-      iframe.sandbox = 'allow-same-origin allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox';
-      this.elements.contentArea.appendChild(iframe);
+  showLoading(tabId) {
+    this.loadingId = tabId;
+    const container = this.getContentContainer(tabId);
+    container.innerHTML = `
+      <div style="display: flex; align-items: center; justify-content: center; height: 100%; color: #888;">
+        <div>Loading...</div>
+      </div>
+    `;
+  }
+
+  showError(tabId, errorMessage) {
+    const container = this.getContentContainer(tabId);
+    container.innerHTML = `
+      <div style="padding: 40px; color: #e0e0e0;">
+        <h2>Failed to load page</h2>
+        <p style="color: #888; margin-top: 10px;">${this.escapeHtml(errorMessage)}</p>
+      </div>
+    `;
+  }
+
+  displayContent(tabId, data) {
+    const container = this.getContentContainer(tabId);
+
+    if (data.contentType.includes('text/html')) {
+      container.innerHTML = data.content;
+      this.handleProxyedContent(container);
+    } else if (data.contentType.includes('image/')) {
+      container.innerHTML = `<img src="data:${data.contentType};base64,${btoa(data.content)}" style="max-width: 100%; max-height: 100%; margin: auto; display: block;">`;
+    } else if (data.contentType.includes('application/json')) {
+      container.innerHTML = `<pre style="padding: 20px; overflow: auto; color: #00ff00;">${this.escapeHtml(data.content)}</pre>`;
+    } else if (data.contentType.includes('text/')) {
+      container.innerHTML = `<pre style="padding: 20px; overflow: auto;">${this.escapeHtml(data.content)}</pre>`;
+    } else {
+      container.innerHTML = `<p style="padding: 20px;">Unable to display this content type: ${data.contentType}</p>`;
     }
-    return iframe;
+  }
+
+  getContentContainer(tabId) {
+    let container = document.getElementById(`content-${tabId}`);
+    if (!container) {
+      container = document.createElement('div');
+      container.id = `content-${tabId}`;
+      container.className = 'content-container';
+      container.style.cssText = 'width: 100%; height: 100%; overflow: auto;';
+      this.elements.contentArea.appendChild(container);
+    }
+    return container;
+  }
+
+  handleProxyedContent(container) {
+    // Make external links work through proxy
+    const links = container.querySelectorAll('a[href]');
+    links.forEach(link => {
+      const href = link.getAttribute('href');
+      if (href && href.startsWith('http') && !href.includes(this.proxyUrl)) {
+        link.addEventListener('click', (e) => {
+          e.preventDefault();
+          this.navigate(href);
+        });
+      }
+    });
+
+    // Disable form submissions
+    const forms = container.querySelectorAll('form');
+    forms.forEach(form => {
+      form.addEventListener('submit', (e) => {
+        e.preventDefault();
+        const action = form.getAttribute('action');
+        if (action) {
+          this.navigate(action);
+        }
+      });
+    });
   }
 
   async toggleBookmark() {
@@ -355,8 +424,8 @@ class Browser {
         e.stopPropagation();
         const tabId = parseInt(btn.dataset.tabId);
         this.tabManager.closeTab(tabId);
-        const frame = document.getElementById(`frame-${tabId}`);
-        if (frame) frame.remove();
+        const container = document.getElementById(`content-${tabId}`);
+        if (container) container.remove();
         const newTabPage = document.getElementById(`newtab-${tabId}`);
         if (newTabPage) newTabPage.remove();
       });
@@ -369,8 +438,8 @@ class Browser {
 
     this.elements.addressBar.value = activeTab.url === 'about:newtab' ? '' : activeTab.url || '';
 
-    document.querySelectorAll('.browser-frame').forEach(frame => {
-      frame.classList.remove('active');
+    document.querySelectorAll('.content-container').forEach(container => {
+      container.style.display = 'none';
     });
 
     document.querySelectorAll('.new-tab-page').forEach(page => {
@@ -380,8 +449,8 @@ class Browser {
     if (activeTab.url === 'about:newtab' || !activeTab.url) {
       this.showNewTabPage(activeTab.id);
     } else {
-      const iframe = this.getTabFrame(activeTab.id);
-      iframe.classList.add('active');
+      const container = this.getContentContainer(activeTab.id);
+      container.style.display = 'block';
     }
   }
 
