@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>TabOS Browser</title>
+  <link rel="stylesheet" href="/src/styles/main.css">
+</head>
+<body>
+  <div id="app">
+    <div class="browser-header">
+      <div class="tabs-container">
+        <div id="tabs" class="tabs"></div>
+        <button id="new-tab-btn" class="new-tab-btn" title="New Tab">+</button>
+      </div>
+
+      <div class="controls-bar">
+        <div class="navigation-controls">
+          <button id="back-btn" class="nav-btn" title="Back">←</button>
+          <button id="forward-btn" class="nav-btn" title="Forward">→</button>
+          <button id="refresh-btn" class="nav-btn" title="Refresh">⟳</button>
+          <button id="home-btn" class="nav-btn" title="Home">⌂</button>
+        </div>
+
+        <div class="address-bar-container">
+          <input type="text" id="address-bar" class="address-bar" placeholder="Search DuckDuckGo or enter URL...">
+          <button id="bookmark-btn" class="bookmark-btn" title="Bookmark">☆</button>
+        </div>
+
+        <div class="action-controls">
+          <button id="bookmarks-btn" class="action-btn" title="Bookmarks">📚</button>
+          <button id="history-btn" class="action-btn" title="History">🕒</button>
+          <button id="settings-btn" class="action-btn" title="Settings">⚙</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="content-area" class="content-area"></div>
+
+    <div id="sidebar" class="sidebar hidden">
+      <div class="sidebar-header">
+        <h2 id="sidebar-title">Bookmarks</h2>
+        <button id="close-sidebar" class="close-btn">✕</button>
+      </div>
+      <div id="sidebar-content" class="sidebar-content"></div>
+    </div>
+  </div>
+
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>
